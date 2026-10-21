@@ -103,6 +103,7 @@ internal class GenerateUnmanagedCallbacksAttribute : Attribute
 
         var source = new StringBuilder();
         var methodSource = new StringBuilder();
+        var methodPinning = new StringBuilder();
         var methodCallArguments = new StringBuilder();
         var methodSourceAfterCall = new StringBuilder();
 
@@ -153,6 +154,7 @@ using Godot.NativeInterop;
         foreach (var callback in data.Methods)
         {
             methodSource.Clear();
+            methodPinning.Clear();
             methodCallArguments.Clear();
             methodSourceAfterCall.Clear();
 
@@ -189,8 +191,8 @@ using Godot.NativeInterop;
                 {
                     if (IsGodotInteropStruct(parameter.Type))
                     {
-                        methodSource.Append("        ");
-                        AppendCustomUnsafeAsPointer(methodSource, parameter, out string varName);
+                        methodPinning.Append("        ");
+                        AppendFixedPointer(methodPinning, parameter, out string varName);
                         methodCallArguments.Append(varName);
                     }
                     else if (parameter.Type.IsValueType)
@@ -229,6 +231,11 @@ using Godot.NativeInterop;
             source.Append("    {\n");
 
             source.Append(methodSource);
+            if (methodPinning.Length != 0)
+            {
+                source.Append(methodPinning);
+                source.Append("        {\n");
+            }
             source.Append("        ");
 
             if (!callback.ReturnsVoid)
@@ -250,6 +257,9 @@ using Godot.NativeInterop;
                 if (!callback.ReturnsVoid)
                     source.Append("        return ret;\n");
             }
+
+            if (methodPinning.Length != 0)
+                source.Append("        }\n");
 
             source.Append("    }\n\n");
         }
@@ -411,28 +421,17 @@ using Godot.NativeInterop;
         source.Append('*');
     }
 
-    private static void AppendCustomUnsafeAsPointer(StringBuilder source, IParameterSymbol parameter,
+    private static void AppendFixedPointer(StringBuilder source, IParameterSymbol parameter,
         out string varName)
     {
         varName = $"{parameter.Name}_ptr";
-
+        source.Append("fixed (");
         AppendPointerType(source, parameter.Type);
         source.Append(' ');
         source.Append(varName);
-        source.Append(" = ");
-
-        source.Append('(');
-        AppendPointerType(source, parameter.Type);
-        source.Append(')');
-
-        if (parameter.RefKind == RefKind.In)
-            source.Append("CustomUnsafe.ReadOnlyRefAsPointer(in ");
-        else
-            source.Append("CustomUnsafe.AsPointer(ref ");
-
+        source.Append(" = &");
         source.Append(parameter.Name);
-
-        source.Append(");\n");
+        source.Append(")\n");
     }
 
     private static void AppendCopyToStackAndGetPointer(StringBuilder source, IParameterSymbol parameter,
