@@ -30,6 +30,8 @@
 
 #include "drivers/metal/metal_allocator.h"
 
+#include "drivers/apple/foundation_helpers.h"
+
 namespace {
 
 class SpinLockGuard {
@@ -46,6 +48,103 @@ public:
 };
 
 } // namespace
+
+#pragma mark - MetalArgumentBufferAllocator
+
+MetalArgumentBufferAllocator::Page::~Page() {
+	memdelete(metadata);
+}
+
+MetalArgumentBufferAllocator::MetalArgumentBufferAllocator(MTL::Device *p_device, MTL::ResourceOptions p_options) :
+		device(p_device), options(p_options) {}
+
+MetalArgumentBufferAllocator::~MetalArgumentBufferAllocator() {
+	for (Page *page : pages) {
+		if (page != nullptr) {
+			DEV_ASSERT(page->live == 0);
+			memdelete(page);
+		}
+	}
+}
+
+MetalArgumentBufferAllocator::Allocation MetalArgumentBufferAllocator::allocate(uint32_t p_length) {
+	MutexLock lock(mutex);
+	uint32_t units = MAX(uint64_t(1), (uint64_t(p_length) + ALIGNMENT - 1) / ALIGNMENT);
+	auto claim = [&](Page *p_page, uint32_t p_index, OffsetAllocator::Allocation p_range) {
+		p_page->live++;
+		if (empty_page == p_index) {
+			empty_page = UINT32_MAX;
+		}
+		Allocation result;
+		result.buffer = p_page->buffer.get();
+		result.offset = NS::UInteger(p_range.offset) * ALIGNMENT;
+		result.contents = p_page->contents ? static_cast<uint8_t *>(p_page->contents) + result.offset : nullptr;
+		result.page = p_index;
+		result.range = p_range;
+		return result;
+	};
+	uint32_t vacant_page = UINT32_MAX;
+	for (uint32_t i = 0; i < pages.size(); i++) {
+		Page *page = pages[i];
+		if (page == nullptr) {
+			vacant_page = i;
+			continue;
+		}
+		OffsetAllocator::Allocation range = page->metadata->allocate(units);
+		if (range.offset != OffsetAllocator::Allocation::NO_SPACE) {
+			return claim(page, i, range);
+		}
+	}
+	uint32_t page_units = MAX(PAGE_BYTES / ALIGNMENT, units);
+	NS::SharedPtr<MTL::Buffer> buffer = NS::TransferPtr(device->newBuffer(NS::UInteger(page_units) * ALIGNMENT, options));
+	ERR_FAIL_NULL_V_MSG(buffer.get(), Allocation(), "Unable to create an argument-buffer page.");
+	Page *page = memnew(Page);
+	page->buffer = buffer;
+	page->units = page_units;
+	page->metadata = memnew(OffsetAllocator::Allocator(page_units, PAGE_BYTES / ALIGNMENT + 1));
+	if (buffer->storageMode() == MTL::StorageModeShared) {
+		page->contents = buffer->contents();
+	}
+	buffer->setLabel(MTLSTR("Uniform Argument Page"));
+	if (vacant_page == UINT32_MAX) {
+		vacant_page = pages.size();
+		pages.push_back(page);
+	} else {
+		pages[vacant_page] = page;
+	}
+	OffsetAllocator::Allocation range = page->metadata->allocate(units);
+	DEV_ASSERT(range.offset != OffsetAllocator::Allocation::NO_SPACE);
+	return claim(page, vacant_page, range);
+}
+
+void MetalArgumentBufferAllocator::free(Allocation &p_allocation) {
+	if (p_allocation.buffer == nullptr) {
+		return;
+	}
+	Page *retired_page = nullptr;
+	{
+		MutexLock lock(mutex);
+		DEV_ASSERT(p_allocation.page < pages.size());
+		uint32_t index = p_allocation.page;
+		Page *page = pages[index];
+		DEV_ASSERT(page != nullptr && page->live > 0 && page->buffer.get() == p_allocation.buffer);
+		page->metadata->free(p_allocation.range);
+		page->live--;
+		p_allocation = Allocation();
+		if (page->live == 0) {
+			if (empty_page == UINT32_MAX && page->units == PAGE_BYTES / ALIGNMENT) {
+				empty_page = index;
+			} else {
+				retired_page = page;
+				pages[index] = nullptr;
+			}
+		}
+	}
+	// Release Metal resources outside the allocator lock.
+	if (retired_page != nullptr) {
+		memdelete(retired_page);
+	}
+}
 
 #pragma mark - MetalAllocator
 

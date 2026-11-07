@@ -1504,13 +1504,12 @@ RDD::UniformSetID RenderingDeviceDriverMetal::uniform_set_create(VectorView<Boun
 		}
 
 		if (!is_dynamic) {
-			set->arg_buffer = allocator->new_buffer(shader_set.buffer_size, base_hazard_tracking | MTL::ResourceStorageModePrivate);
-#if DEV_ENABLED
-			char label[64];
-			snprintf(label, sizeof(label), "Uniform Set %u", p_set_index);
-			set->arg_buffer.buffer->setLabel(NS::String::string(label, NS::UTF8StringEncoding));
-#endif
-			_copy_queue_copy_to_buffer(arg_buffer_data, set->arg_buffer.buffer.get());
+			set->arg_buffer = argument_buffers->allocate(shader_set.buffer_size);
+			if (set->arg_buffer.contents != nullptr) {
+				memcpy(set->arg_buffer.contents, arg_buffer_data.ptr(), arg_buffer_data.size());
+			} else {
+				_copy_queue_copy_to_buffer(arg_buffer_data, set->arg_buffer.buffer, set->arg_buffer.offset);
+			}
 		} else {
 			// Store the arg buffer data for dynamic uniform sets.
 			// It will be copied and updated at bind time.
@@ -1531,7 +1530,8 @@ RDD::UniformSetID RenderingDeviceDriverMetal::uniform_set_create(VectorView<Boun
 
 void RenderingDeviceDriverMetal::uniform_set_free(UniformSetID p_uniform_set) {
 	MDUniformSet *obj = (MDUniformSet *)p_uniform_set.id;
-	allocator->free_buffer(obj->arg_buffer);
+	// RenderingDevice calls this only after the owning frame's fence completes.
+	argument_buffers->free(obj->arg_buffer);
 	memdelete(obj);
 }
 
@@ -2530,8 +2530,8 @@ void RenderingDeviceDriverMetal::set_object_name(ObjectType p_type, ID p_driver_
 			}
 		} break;
 		case OBJECT_TYPE_UNIFORM_SET: {
-			MDUniformSet *set = (MDUniformSet *)(p_driver_id.id);
-			set->arg_buffer.buffer->setLabel(label);
+			// Static sets share a page and dynamic sets have no persistent buffer.
+			// Keep the page label; RenderingDevice retains the individual set name.
 		} break;
 		case OBJECT_TYPE_PIPELINE: {
 			// Can't set label after creation.
@@ -2896,6 +2896,7 @@ RenderingDeviceDriverMetal::~RenderingDeviceDriverMetal() {
 	memdelete(device_properties);
 
 	if (allocator != nullptr) {
+		argument_buffers.reset();
 		allocator->free_buffer(copy_queue_buffer);
 
 #ifdef DEBUG_ENABLED
@@ -3022,6 +3023,10 @@ Error RenderingDeviceDriverMetal::_initialize(uint32_t p_device_index, uint32_t 
 	// runs barriers.
 	bool use_heaps = sync_mode == Barriers;
 	allocator = MetalAllocator::create(device, use_heaps);
+	// As with dynamic argument buffers, unified-memory devices can publish the
+	// complete new arguments directly. Discrete devices retain the private copy path.
+	MTL::ResourceOptions argument_storage = device->hasUnifiedMemory() ? MTL::ResourceStorageModeShared : MTL::ResourceStorageModePrivate;
+	argument_buffers = std::make_unique<MetalArgumentBufferAllocator>(device, base_hazard_tracking | argument_storage);
 	if (use_heaps) {
 		print_verbose("Metal: heap suballocation enabled.");
 	}

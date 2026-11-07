@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "core/os/mutex.h"
 #include "core/os/spin_lock.h"
 #include "core/templates/local_vector.h"
 
@@ -72,6 +73,42 @@ struct MetalBuffer {
 struct MetalTexture {
 	NS::SharedPtr<MTL::Texture> texture;
 	MetalAllocation allocation;
+};
+
+/// Static argument sets share pages, but each range remains owned until its
+/// uniform set's frame fence retires. Keep only one empty ordinary page.
+class API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0)) MetalArgumentBufferAllocator {
+public:
+	static constexpr uint32_t ALIGNMENT = 16;
+	static constexpr uint32_t PAGE_BYTES = 64 * 1024;
+	struct Allocation {
+		MTL::Buffer *buffer = nullptr; // Borrowed from the live page allocation.
+		void *contents = nullptr; // CPU address for shared storage, otherwise null.
+		NS::UInteger offset = 0;
+		uint32_t page = UINT32_MAX;
+		OffsetAllocator::Allocation range;
+	};
+
+private:
+	struct Page {
+		NS::SharedPtr<MTL::Buffer> buffer;
+		OffsetAllocator::Allocator *metadata = nullptr;
+		void *contents = nullptr;
+		uint32_t units = 0;
+		uint32_t live = 0;
+		~Page();
+	};
+	MTL::Device *device = nullptr;
+	MTL::ResourceOptions options;
+	Mutex mutex;
+	LocalVector<Page *> pages;
+	uint32_t empty_page = UINT32_MAX;
+
+public:
+	MetalArgumentBufferAllocator(MTL::Device *p_device, MTL::ResourceOptions p_options);
+	~MetalArgumentBufferAllocator();
+	Allocation allocate(uint32_t p_length);
+	void free(Allocation &p_allocation);
 };
 
 #ifdef DEBUG_ENABLED

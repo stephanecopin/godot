@@ -80,6 +80,7 @@ protected:
 	RenderingContextDriver::Device context_device;
 	MTL::Device *device = nullptr;
 	MetalAllocator *allocator = nullptr;
+	std::unique_ptr<MetalArgumentBufferAllocator> argument_buffers;
 
 	uint32_t _frame_count = 1;
 	/// frame_index is a cyclic counter derived from the current frame number modulo frame_count,

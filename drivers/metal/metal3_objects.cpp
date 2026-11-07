@@ -1937,7 +1937,7 @@ void MDCommandBuffer::_bind_uniforms_argument_buffers(MDUniformSet *p_set, MDSha
 
 		_set_arg_buffer(enc, shader_set, alloc.buffer, alloc.offset, p_set_index);
 	} else {
-		_set_arg_buffer(enc, shader_set, p_set->arg_buffer.buffer.get(), 0, p_set_index);
+		_set_arg_buffer(enc, shader_set, p_set->arg_buffer.buffer, p_set->arg_buffer.offset, p_set_index);
 	}
 }
 
@@ -2094,7 +2094,7 @@ void MDCommandBuffer::_bind_uniforms_argument_buffers_compute(MDUniformSet *p_se
 
 		enc->setBuffer(alloc.buffer, alloc.offset, p_set_index);
 	} else {
-		enc->setBuffer(p_set->arg_buffer.buffer.get(), 0, p_set_index);
+		enc->setBuffer(p_set->arg_buffer.buffer, p_set->arg_buffer.offset, p_set_index);
 	}
 }
 
