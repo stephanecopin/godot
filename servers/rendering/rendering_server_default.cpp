@@ -39,6 +39,10 @@
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server_globals.h"
 
+#ifdef METAL_ENABLED
+#include <Foundation/Foundation.hpp>
+#endif
+
 #ifndef XR_DISABLED
 #include "servers/xr/xr_server.h"
 #endif
@@ -421,6 +425,11 @@ void RenderingServerDefault::_thread_loop() {
 
 	while (!exit) {
 		WorkerThreadPool::get_singleton()->yield();
+#ifdef METAL_ENABLED
+		// This worker does not return to the platform's main-thread autorelease
+		// pool. Drain temporary Metal objects after each command queue batch.
+		NS::SharedPtr<NS::AutoreleasePool> pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
+#endif
 		command_queue.flush_all();
 	}
 
