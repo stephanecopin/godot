@@ -141,7 +141,7 @@ class API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0), visionos(2.0)) MDRingBuf
 public:
 	static constexpr uint32_t DEFAULT_BUFFER_SIZE = 512 * 1024;
 	static constexpr uint32_t MIN_BLOCK_SIZE = 16;
-	static constexpr uint32_t ALIGNMENT = 16;
+	static constexpr uint32_t ALIGNMENT = MetalArgumentBufferAllocator::ALIGNMENT;
 
 	struct Allocation {
 		void *ptr = nullptr;
@@ -961,7 +961,7 @@ _FORCE_INLINE_ MTL::ResourceUsage resource_usage_for_stage(StageResourceUsage p_
 
 class API_AVAILABLE(macos(11.0), ios(14.0), tvos(14.0), visionos(2.0)) MDUniformSet {
 public:
-	MetalBuffer arg_buffer;
+	MetalArgumentBufferAllocator::Allocation arg_buffer;
 	Vector<uint8_t> arg_buffer_data; // Stored for dynamic uniform sets.
 	ResourceUsageMap usage_to_resources; // Used by Metal 3 for resource tracking.
 	Vector<RDD::BoundUniform> uniforms;
