@@ -656,11 +656,13 @@ bool GodotSpace3D::test_body_motion(GodotBody3D *p_body, const PS3DT::MotionPara
 			continue;
 		}
 
+		const Transform3D shape_transform = p_parameters.from * p_body->get_shape_transform(i);
+		const AABB shape_aabb = shape_transform.xform(p_body->get_shape(i)->get_aabb());
 		if (!shapes_found) {
-			body_aabb = p_body->get_shape_aabb(i);
+			body_aabb = shape_aabb;
 			shapes_found = true;
 		} else {
-			body_aabb = body_aabb.merge(p_body->get_shape_aabb(i));
+			body_aabb = body_aabb.merge(shape_aabb);
 		}
 	}
 
@@ -674,8 +676,9 @@ bool GodotSpace3D::test_body_motion(GodotBody3D *p_body, const PS3DT::MotionPara
 
 	real_t margin = MAX(p_parameters.margin, TEST_MOTION_MARGIN_MIN_VALUE);
 
-	// Undo the currently transform the physics server is aware of and apply the provided one
-	body_aabb = p_parameters.from.xform(p_body->get_inv_transform().xform(body_aabb));
+	// Build query bounds from the shapes at the requested pose. Transforming the
+	// cached world AABB back and forth enlarges it under rotation, and also carries
+	// broad-phase padding into every concave-triangle query.
 	body_aabb = body_aabb.grow(margin);
 
 	real_t min_contact_depth = margin * TEST_MOTION_MIN_CONTACT_DEPTH_FACTOR;
